@@ -33,7 +33,8 @@ defmodule Bottler.Ship do
               app: Mix.Project.get!.project[:app]]
 
 
-    servers |> H.in_tasks( &(&1 |> K.merge(common) |> run_scp), task_opts)
+    invoke_by_servers(servers, &run_scp/1, common, task_opts)
+    #servers |> H.in_tasks( &(&1 |> K.merge(common) |> run_scp), task_opts)
   end
 
   defp remote_scp_shipment(config, servers, ship_config) do
@@ -48,14 +49,14 @@ defmodule Bottler.Ship do
 
     # straight scp to first remote
     L.info "Uploading release to #{first[:id]}..."
-    [first] |> H.in_tasks( &(&1 |> K.merge(common) |> run_scp),  task_opts)
+    invoke_by_servers([first], &run_scp/1, common, task_opts)
 
     # scp from there to the rest
     L.info "Distributing release from #{first[:id]} to #{Enum.map_join(rest, ",", &(&1[:id]))}..."
     common_rest = common |> K.merge(src_ip: first[:ip],
                                     srcpath: "/tmp/#{common[:app]}.tar.gz",
                                     method: :remote_scp)
-    rest |> H.in_tasks( &(&1 |> K.merge(common_rest) |> run_scp), task_opts)
+    invoke_by_servers(rest, &run_scp/1, common_rest, task_opts)
   end
 
   defp release_script_shipment(config, servers, ship_config, publish_config) do
@@ -70,7 +71,24 @@ defmodule Bottler.Ship do
               publish_folder: publish_config[:folder],
               release_ship_script: ship_config[:release_ship_script]]
 
-    servers |> H.in_tasks( &(&1 |> K.merge(common) |> invoke_download_latest_release), task_opts)
+    invoke_by_servers(servers, &invoke_download_latest_release/1, common, task_opts)
+  end
+
+  defp invoke_by_servers(servers_data, fun, fun_args, task_opts) do
+    invoke_by_servers(servers_data, fun, fun_args, task_opts, length(servers_data))
+  end
+  defp invoke_by_servers(servers_data, fun, fun_args, task_opts, parallelism)
+    when is_integer(parallelism) do
+      parallel_invoke_by_servers(servers_data, fun, fun_args, task_opts, parallelism)
+  end
+  defp parallel_invoke_by_servers(servers_data, fun, fun_args, task_opts, parallelism) do
+    servers_data
+    |> Enum.chunk(parallelism, parallelism, [])
+    |> H.in_tasks(fn(server_data) -> invoke_by_server(server_data, fun, fun_args) end, task_opts)
+  end
+
+  defp invoke_by_server(server_data, fun, fun_args) do
+    server_data |> K.merge(fun_args) |> fun.()
   end
 
   defp get_release_script_args(args) do
