@@ -19,16 +19,18 @@ defmodule Mix.Tasks.Deploy do
     {switches, _} = H.parse_args!(args)
 
     H.set_prod_environment
+
     c = H.read_and_validate_config
       |> H.validate_branch
       |> H.inline_resolve_servers(switches)
-    :ok = B.release c
-    :ok = B.publish c
-    {:ok, _} = B.ship c
-    {:ok, _} = B.install c
-    {:ok, _} = B.restart c
-    :ok = B.green_flag c
-    :ok
+
+    {:ok, c}
+    |> B.release
+    |> B.publish
+    |> B.ship
+    |> B.install
+    |> B.restart
+    |> B.green_flag
   end
 
 end

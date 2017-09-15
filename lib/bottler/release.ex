@@ -3,19 +3,25 @@ require Bottler.Helpers, as: H
 
 defmodule Bottler.Release do
 
+  defmodule State do
+    defstruct ~w(config env)a
+  end
+
+  defmodule Error do
+    defstruct ~w(reason state)a
+  end
+
   @moduledoc """
     Code to build a release file. Many small tools working in harmony.
   """
   @doc """
-    Build a release tar.gz. Returns `:ok` when done. Crash otherwise.
+    Build a release tar.gz. Returns `:ok` when done, `:error` otherwise
   """
-  def release(config) do
+  def release({:ok, config}) do
     L.info "Compiling deps for release..."
-    env = System.get_env "MIX_ENV"
-    :ok = H.cmd "MIX_ENV=#{env} mix deps.get"
-    :ok = H.cmd "MIX_ENV=#{env} mix compile"
-
-    if env == "prod", do: H.check_erts_versions(config)
+    %State{config: config}
+    |> add_env
+# if env == "prod", do: H.check_erts_versions(config)
 
     L.info "Generating release tar.gz ..."
     File.rm_rf! "rel"
@@ -23,8 +29,44 @@ defmodule Bottler.Release do
     generate_rel_file()
     generate_config_file()
     generate_tar_file config
-    :ok
+
+    {:ok, config}
   end
+  def release(x), do: x
+
+  defp add_env(%State{} = state) do
+    %State{state | env: System.get_env "MIX_ENV"}
+  end
+  defp add_env(x), do: x
+
+  defp run_local_cmd(%State{} = state, cmd, args, opts) do
+    result = H.cmd(cmd, args, opts)
+
+    case result do
+      {:ok, _} ->
+        state
+
+      {:error, output} ->
+        msg = ~s(Failed to execute local cmd: "#{cmd} #{Enum.join(args, " ")}", opts: "#{opts}", output: "#{output}")
+        %Error{reason: msg, state: state}
+    end
+  end
+  defp run_local_cmd(%Error{} = error), do: error
+
+  defp mix_deps_get(%State{env: env} = state) do
+    run_local_cmd(state, "mix", ["deps.get"], env: [{"MIX_ENV", env}])
+  end
+  defp mix_deps_get(x), do: x
+
+  defp mix_compile(%State{env: env} = state) do
+    run_local_cmd(state, "mix", ["compile"], env: [{"MIX_ENV", env}])
+  end
+  defp mix_compile(x), do: x
+
+  defp maybe_check_erts_versions(%State{env: "prod", config: config} = state) do
+    H.check_erts_versions(config)
+  end
+  defp maybe_check_erts_versions(x), do: x
 
   defp generate_rel_file,
     do: H.write_term("rel/#{Mix.Project.get!.project[:app]}.rel", get_rel_term())

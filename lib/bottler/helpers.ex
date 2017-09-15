@@ -146,8 +146,10 @@ defmodule Bottler.Helpers do
       Mix.env :prod
     end
 
-    res = "config/config.exs" |> Path.absname
-          |> Mix.Config.read! |> Mix.Config.persist
+    res = "config/config.exs"
+      |> Path.absname
+      |> Mix.Config.read!
+      |> Mix.Config.persist
 
     # different responses for Elixir 1.0 and 1.1, we want both
     if not is_ok_response_for_10_and_11(res),
@@ -253,15 +255,17 @@ defmodule Bottler.Helpers do
   """
   def inline_resolve_servers(config), do: inline_resolve_servers(config, [])
   def inline_resolve_servers(config, switches) do
-    servers_list = guess_server_list(config)
+    servers_list = config
+      |> guess_server_list
       |> inline_filter_servers(switches[:servers])
 
-    config |> Keyword.put(:servers, servers_list)
+    Keyword.put(config, :servers, servers_list)
   end
 
   defp inline_filter_servers(servers, nil), do: servers
   defp inline_filter_servers(servers, switch) when is_binary(switch) do
     names = switch |> String.split(",") |> Enum.map(&Regex.compile!(&1))
+
     servers
     |> Enum.filter(fn({k,_})->
       k = to_string(k)
@@ -276,7 +280,7 @@ defmodule Bottler.Helpers do
     |> Bottler.Helpers.GCE.instances
     |> Enum.map(fn(i)->
       name = i["name"] |> String.to_atom
-      ip = i |> get_nested(["networkInterfaces", 0, "accessConfigs", 0, "natIP"])
+      ip = get_nested(i, ["networkInterfaces", 0, "accessConfigs", 0, "natIP"])
       {name, [ip: ip]}
     end)
     |> pipe_log("<%= inspect data %>")
@@ -287,7 +291,8 @@ defmodule Bottler.Helpers do
     It returns a plain list, with a `Keyword` for each server.
   """
   def prepare_servers(servers) do
-    servers |> Enum.map(fn({name, values}) ->
+    servers
+    |> Enum.map(fn({name, values}) ->
       values ++ [ name: name, id: "#{name}(#{values[:ip]})" ]
     end)
   end
@@ -330,10 +335,10 @@ defmodule Bottler.Helpers do
   @doc """
     Run given command through `Mix.Shell`
   """
-  def cmd(command) do
-    case Mix.Shell.cmd(command, &(IO.write(&1)) ) do
-      0 -> :ok
-      _ -> {:error, "Release step failed. Please fix any errors and try again."}
+  def cmd(command, args, opts \\ []) do
+    case System.cmd(command, args, opts) do
+      {output, 0} -> {:ok, output}
+      {output, _} -> {:error, output}
     end
   end
 
@@ -362,32 +367,6 @@ defmodule Bottler.Helpers do
   def empty_dir(path) do
     File.rm_rf! path
     File.mkdir_p! path
-  end
-
-  @doc """
-    Log local and remote versions of erts
-  """
-  def check_erts_versions(config) do
-    :ssh.start # just in case
-
-    local_release = :erlang.system_info(:version) |> to_string
-
-    {_, remote_releases} = config[:servers] |> K.values
-      |> in_tasks( fn(args)->
-        user = config[:remote_user] |> to_charlist
-        ip = args[:ip] |> to_charlist
-        {:ok, conn} = SSHEx.connect(ip: ip, user: user)
-        cmd = "source ~/.bash_profile && erl -eval 'erlang:display(erlang:system_info(version)), halt().'  -noshell" |> to_charlist
-        SSHEx.cmd!(conn, cmd)
-        |> String.replace(~r/[\n\r\\"]/, "")
-        |> Kernel.<>(" on #{ip}")
-      end, to_s: false)
-
-    level = if Enum.all?(remote_releases, &( local_release == &1 |> String.split(" ") |> List.first )), do: :info, else: :error
-
-    L.log level, "Compiling against Erlang/OTP release #{local_release}. Remote releases are #{Enum.map_join(remote_releases, ", ", &(&1))}."
-
-    if level == :error, do: raise "Aborted release"
   end
 
   @doc """

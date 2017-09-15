@@ -84,7 +84,11 @@ defmodule Bottler.Ship do
   defp parallel_invoke_by_servers(servers_data, fun, fun_args, task_opts, parallelism) do
     servers_data
     |> Enum.chunk(parallelism, parallelism, [])
-    |> H.in_tasks(fn(server_data) -> invoke_by_server(server_data, fun, fun_args) end, task_opts)
+    |> Enum.map(fn(servers_data_chunk) ->
+      H.in_tasks(servers_data_chunk, fn(server_data) ->
+        invoke_by_server(server_data, fun, fun_args)
+      end, task_opts)
+    end)
   end
 
   defp invoke_by_server(server_data, fun, fun_args) do
